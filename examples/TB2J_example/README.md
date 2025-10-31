@@ -1,84 +1,64 @@
-# PAOFLOW to TB2J Integration Examples
+# PAOFLOW to TB2J Integration
 
-This directory contains examples demonstrating how to export tight-binding Hamiltonians from PAOFLOW for use with TB2J to calculate magnetic exchange interactions.
+This directory contains examples and tools for converting PAOFLOW tight-binding Hamiltonians to TB2J format for calculating magnetic exchange interactions.
 
-## Overview
+## Approach: Standalone Converter
 
-TB2J (Tight-Binding to J) is a tool for calculating magnetic exchange interactions using the magnetic force theorem. It requires tight-binding Hamiltonians in Wannier90 format.
+Instead of modifying PAOFLOW code, we use a **standalone converter tool** that reads existing PAOFLOW output and converts it to TB2J format. This approach:
 
-PAOFLOW can export its tight-binding Hamiltonians in a format compatible with TB2J using the `write_Hamiltonian_TB2J()` method.
+- ✅ Works with any PAOFLOW version (no code modifications needed)
+- ✅ Converts existing output without re-running PAOFLOW
+- ✅ Maintains separation between PAOFLOW and format conversion
+- ✅ Easy to maintain and update independently
 
-## Example Files
+## Quick Start
 
-- **`example_export_for_TB2J.py`** - VASP example
-- **`example_export_QE_for_TB2J.py`** - Quantum ESPRESSO example
+### 1. Generate Hamiltonian with PAOFLOW
 
-## Workflow
+Use PAOFLOW's existing `write_Hamiltonian()` method:
 
-### 1. Generate Tight-Binding Hamiltonian with PAOFLOW
-
-#### For VASP (example_export_for_TB2J.py):
-
+**For VASP** (see `example_export_for_TB2J.py`):
 ```python
 from PAOFLOW import PAOFLOW
 
-# Initialize PAOFLOW with your DFT data
-paoflow = PAOFLOW(savedir='./nscf_nspin2/',  
-                  outputdir='./output_TB2J/', 
-                  verbose=True,
-                  dft="VASP")
-
-# Define basis (required for VASP)
-basis_path = '../../../BASIS/'
-basis_config = {'Fe':['3D','4S','4P']}  # Example for Fe
-paoflow.projections(basispath=basis_path, configuration=basis_config)
-
-# Build the tight-binding Hamiltonian
+paoflow = PAOFLOW(savedir='./nscf_nspin2/', outputdir='./output/', dft="VASP")
+paoflow.projections(basispath='../BASIS/', configuration={'Fe':['3D','4S','4P']})
 paoflow.projectability()
 paoflow.pao_hamiltonian()
-
-# Export Hamiltonian in TB2J format
-paoflow.write_Hamiltonian_TB2J(prefix='Fe')
+paoflow.write_Hamiltonian('hamiltonian.dat')  # Creates _0 and _1 files
 ```
 
-#### For Quantum ESPRESSO (example_export_QE_for_TB2J.py):
-
+**For Quantum ESPRESSO** (see `example_export_QE_for_TB2J.py`):
 ```python
 from PAOFLOW import PAOFLOW
 
-# Initialize PAOFLOW with QE data
-paoflow = PAOFLOW.PAOFLOW(
-    savedir='fe.save',           # QE .save directory
-    outputdir='output_TB2J',
-    verbose=True,
-    dft='QE'
-)
-
-# Read atomic projections from QE (no need to specify basis manually)
+paoflow = PAOFLOW.PAOFLOW(savedir='fe.save', outputdir='output/', dft='QE')
 paoflow.read_atomic_proj_QE()
-
-# Build the tight-binding Hamiltonian
 paoflow.projectability()
 paoflow.pao_hamiltonian()
-
-# Export Hamiltonian in TB2J format
-paoflow.write_Hamiltonian_TB2J(prefix='Fe')
-
+paoflow.write_Hamiltonian('hamiltonian.dat')  # Creates _0 and _1 files
 paoflow.finish_execution()
 ```
 
-Both examples will create files in the output directory:
-- `Fe.up_hr.dat` - Spin-up Hamiltonian
-- `Fe.dn_hr.dat` - Spin-down Hamiltonian
+### 2. Convert to TB2J Format
 
-### 2. Use with TB2J
-
-Once you have the Hamiltonian files, you can use TB2J to calculate exchange interactions:
-
-#### For VASP output:
+Use the standalone converter tool:
 
 ```bash
-wann2J --path ./output_TB2J/ \
+cd ../../tools/paoflow2tb2j
+python paoflow2tb2j.py --input ../../examples/TB2J_example/output/ \
+                       --input-prefix hamiltonian.dat \
+                       --output-prefix Fe
+```
+
+This creates TB2J-compatible files:
+- `Fe.up_hr.dat` (spin-up)
+- `Fe.dn_hr.dat` (spin-down)
+
+### 3. Use with TB2J
+
+```bash
+wann2J --path output/ \
        --prefix_up Fe.up \
        --prefix_down Fe.dn \
        --posfile POSCAR \
@@ -87,31 +67,62 @@ wann2J --path ./output_TB2J/ \
        --kmesh 10 10 10
 ```
 
-#### For QE output:
+## Files in This Directory
 
-```bash
-wann2J --path ./output_TB2J/ \
-       --prefix_up Fe.up \
-       --prefix_down Fe.dn \
-       --posfile <qe_structure_file> \
-       --elements Fe \
-       --efermi <fermi_energy> \
-       --kmesh 10 10 10
+- **`example_export_for_TB2J.py`** - VASP example
+- **`example_export_QE_for_TB2J.py`** - Quantum ESPRESSO example
+- **`README.md`** - This file
+
+## Converter Tool
+
+The standalone converter is located in `../../tools/paoflow2tb2j/`:
+
+- **`paoflow2tb2j.py`** - Main converter script
+- **`README.md`** - Detailed usage instructions
+
+See `../../tools/paoflow2tb2j/README.md` for complete documentation.
+
+## Workflow Summary
+
+```
+┌─────────────────┐
+│   PAOFLOW       │
+│ (existing code) │
+└────────┬────────┘
+         │ write_Hamiltonian()
+         ▼
+┌─────────────────┐
+│ hamiltonian_0   │ (spin-up, Wannier90 format)
+│ hamiltonian_1   │ (spin-down, Wannier90 format)
+└────────┬────────┘
+         │ paoflow2tb2j.py
+         ▼
+┌─────────────────┐
+│  Fe.up_hr.dat   │ (TB2J naming)
+│  Fe.dn_hr.dat   │ (TB2J naming)
+└────────┬────────┘
+         │ wann2J
+         ▼
+┌─────────────────┐
+│   TB2J Output   │ (Exchange interactions)
+└─────────────────┘
 ```
 
-Key points:
+## TB2J Command Reference
+
+Key points for TB2J usage:
 - `--prefix_up` and `--prefix_down`: Use the prefix without `_hr.dat` extension
-- TB2J will automatically look for `{prefix_up}_hr.dat` and `{prefix_down}_hr.dat`
+- TB2J automatically looks for `{prefix_up}_hr.dat` and `{prefix_down}_hr.dat`
 - `--elements`: Specify the magnetic elements in your system
-- `--efermi`: Fermi energy (in eV, usually 0 if you shifted it in PAOFLOW)
+- `--efermi`: Fermi energy in eV (usually 0 if shifted in PAOFLOW)
 - `--kmesh`: k-point mesh for integration
 
 ## Output Format
 
-The Hamiltonian files are written in Wannier90 `_hr.dat` format:
+The converter creates files in Wannier90 `_hr.dat` format:
 
 ```
-PAOFLOW Generated for TB2J
+PAOFLOW to TB2J Converter
 <number of Wannier functions>
 <number of R vectors>
 <degeneracy weights>
@@ -121,22 +132,21 @@ PAOFLOW Generated for TB2J
 
 ## Spin Components
 
-- **nspin=1** (non-spin-polarized): Creates a single file `{prefix}_hr.dat`
-- **nspin=2** (spin-polarized): Creates two files:
+- **nspin=1** (non-spin-polarized): Single file `{prefix}_hr.dat`
+- **nspin=2** (spin-polarized): Two files
   - `{prefix}.up_hr.dat` for spin-up channel
   - `{prefix}.dn_hr.dat` for spin-down channel
 
-## Notes
+## Technical Notes
 
-1. **For VASP**: You must specify the projection basis configuration
-2. **For Quantum ESPRESSO**: The projection basis is read from the .save directory
-3. The Hamiltonian is written in real space (HRs), obtained by Fourier transforming the k-space Hamiltonian (Hks)
-4. The code automatically pads the grid to ensure an odd number of points in each direction
-5. For TB2J calculations, you typically want a dense k-point mesh in your DFT calculation
-6. Make sure your PAOFLOW calculation includes the magnetic atoms in the projection basis
-7. The Fermi energy for TB2J should be in eV (get it from DFT output or PAOFLOW)
+1. PAOFLOW's `write_Hamiltonian()` already outputs in Wannier90 format
+2. The converter mainly renames files to TB2J's expected convention
+3. For binary `.npy` files, the converter also performs Fourier transform
+4. The Hamiltonian is in real space (HRs), obtained by FFT from k-space
+5. Grid is automatically padded to ensure odd dimensions
 
 ## References
 
-- TB2J: https://github.com/mailhexu/TB2J
 - PAOFLOW: https://github.com/marcobn/PAOFLOW
+- TB2J: https://github.com/mailhexu/TB2J
+- Wannier90: http://www.wannier.org/

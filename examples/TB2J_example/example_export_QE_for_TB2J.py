@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
-Example: Export Quantum ESPRESSO Hamiltonians to TB2J format
+Example: Export Quantum ESPRESSO Hamiltonians for TB2J
 
-This script demonstrates how to export spin-polarized tight-binding Hamiltonians
-from a Quantum ESPRESSO calculation to TB2J format for calculating magnetic
-exchange interactions.
-
-Prerequisites:
-- A completed QE nscf calculation with spin-polarized projections
-- The QE .save directory containing the projection data
+This script demonstrates how to generate Hamiltonians from QE with PAOFLOW
+that can be converted to TB2J format using the standalone paoflow2tb2j tool.
 """
 
 from PAOFLOW import PAOFLOW
@@ -18,7 +13,7 @@ def main():
     # Replace 'fe.save' with your QE .save directory name
     paoflow = PAOFLOW.PAOFLOW(
         savedir='fe.save',           # QE .save directory
-        outputdir='output_TB2J',     # Output directory for TB2J files
+        outputdir='output_TB2J',     # Output directory
         verbose=True,
         dft='QE'                     # Specify Quantum ESPRESSO
     )
@@ -32,31 +27,36 @@ def main():
     paoflow.projectability()
     paoflow.pao_hamiltonian()
     
-    # Export Hamiltonian in TB2J-compatible format
-    # For spin-polarized calculations (nspin=2), this creates:
-    #   - Fe.up_hr.dat (spin-up channel)
-    #   - Fe.dn_hr.dat (spin-down channel)
-    paoflow.write_Hamiltonian_TB2J(prefix='Fe')
+    # Write Hamiltonian using PAOFLOW's existing write_Hamiltonian method
+    # For spin-polarized calculations, this creates:
+    #   - hamiltonian.dat_0 (spin-up channel)
+    #   - hamiltonian.dat_1 (spin-down channel)
+    paoflow.write_Hamiltonian('hamiltonian.dat')
     
     print("\n" + "="*70)
-    print("SUCCESS: Hamiltonians exported for TB2J!")
+    print("SUCCESS: Hamiltonians written!")
     print("="*70)
-    print("\nGenerated files:")
-    print("  - Fe.up_hr.dat   (spin-up Hamiltonian)")
-    print("  - Fe.dn_hr.dat   (spin-down Hamiltonian)")
-    print("\nNext steps for TB2J:")
-    print("1. Prepare your structure file (e.g., from QE output):")
-    print("   You can use the atomic positions from your QE calculation")
-    print("\n2. Run TB2J to calculate exchange interactions:")
-    print("   wann2J --path ./output_TB2J/ \\")
+    print("\nGenerated files in output_TB2J/:")
+    print("  - hamiltonian.dat_0 (spin-up)")
+    print("  - hamiltonian.dat_1 (spin-down)")
+    print("\nNext steps:")
+    print("1. Convert to TB2J format using the standalone converter:")
+    print("   cd ../../tools/paoflow2tb2j")
+    print("   python paoflow2tb2j.py --input ../../examples/TB2J_example/output_TB2J/ \\")
+    print("                          --input-prefix hamiltonian.dat \\")
+    print("                          --output-prefix Fe")
+    print("\n2. This will create:")
+    print("   - Fe.up_hr.dat (spin-up, TB2J format)")
+    print("   - Fe.dn_hr.dat (spin-down, TB2J format)")
+    print("\n3. Run TB2J to calculate exchange interactions:")
+    print("   wann2J --path output_TB2J/ \\")
     print("          --prefix_up Fe.up \\")
     print("          --prefix_down Fe.dn \\")
     print("          --posfile <structure_file> \\")
     print("          --elements Fe \\")
     print("          --efermi <fermi_energy> \\")
     print("          --kmesh 10 10 10")
-    print("\n   Note: Fermi energy should be in eV")
-    print("   (You can get it from the QE output or PAOFLOW)")
+    print("\n   Note: Get Fermi energy from QE output or PAOFLOW")
     print("="*70 + "\n")
     
     # Finish execution

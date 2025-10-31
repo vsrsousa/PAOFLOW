@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Example script showing how to export PAOFLOW Hamiltonians for TB2J
+Example: Export VASP Hamiltonians for TB2J using existing PAOFLOW methods
 
-This script demonstrates the workflow for a spin-polarized calculation.
+This script demonstrates how to generate Hamiltonians with PAOFLOW that can
+be converted to TB2J format using the standalone paoflow2tb2j converter tool.
 """
 
 from PAOFLOW import PAOFLOW
@@ -13,7 +14,7 @@ def main():
     paoflow = PAOFLOW(savedir='./nscf_nspin2/',  
                       outputdir='./output_TB2J/', 
                       verbose=True,
-                      dft="VASP")  # Change to "QE" for Quantum ESPRESSO
+                      dft="VASP")
     
     # For VASP, you need to define the projection basis
     # Adjust basis configuration for your material
@@ -28,23 +29,33 @@ def main():
     paoflow.projectability()
     paoflow.pao_hamiltonian()
     
-    # Export Hamiltonian for TB2J
-    # This creates:
-    # - MyMaterial.up_hr.dat (spin-up channel)
-    # - MyMaterial.dn_hr.dat (spin-down channel)
-    paoflow.write_Hamiltonian_TB2J(prefix='MyMaterial')
+    # Write Hamiltonian using PAOFLOW's existing write_Hamiltonian method
+    # This creates files in Wannier90 format:
+    # - hamiltonian.dat_0 (spin-up channel)
+    # - hamiltonian.dat_1 (spin-down channel)
+    paoflow.write_Hamiltonian('hamiltonian.dat')
     
     print("\n" + "="*60)
-    print("Hamiltonians exported successfully!")
+    print("Hamiltonians written successfully!")
     print("="*60)
+    print("\nGenerated files in output_TB2J/:")
+    print("  - hamiltonian.dat_0 (spin-up)")
+    print("  - hamiltonian.dat_1 (spin-down)")
     print("\nNext steps:")
-    print("1. Copy your POSCAR file to the output_TB2J directory")
-    print("2. Run TB2J with:")
-    print("   wann2J --path ./output_TB2J/ \\")
-    print("          --prefix_up MyMaterial.up \\")
-    print("          --prefix_down MyMaterial.dn \\")
+    print("1. Convert to TB2J format using the standalone converter:")
+    print("   cd ../../tools/paoflow2tb2j")
+    print("   python paoflow2tb2j.py --input ../../examples/TB2J_example/output_TB2J/ \\")
+    print("                          --input-prefix hamiltonian.dat \\")
+    print("                          --output-prefix Fe")
+    print("\n2. This will create:")
+    print("   - Fe.up_hr.dat (spin-up, TB2J format)")
+    print("   - Fe.dn_hr.dat (spin-down, TB2J format)")
+    print("\n3. Run TB2J:")
+    print("   wann2J --path output_TB2J/ \\")
+    print("          --prefix_up Fe.up \\")
+    print("          --prefix_down Fe.dn \\")
     print("          --posfile POSCAR \\")
-    print("          --elements Fe \\")  # Adjust for your material
+    print("          --elements Fe \\")
     print("          --efermi 0.0 \\")
     print("          --kmesh 10 10 10")
     print("="*60 + "\n")
