@@ -484,6 +484,57 @@ class DataController:
       print('H(k),S(k),k,wk written to file')
 
 
+  def _write_HRs_to_file ( self, HRS, nk1, nk2, nk3, nawf, ispin, f, header="PAOFLOW Generated" ):
+    '''
+    Internal method to write real-space Hamiltonian to file in Wannier90 format.
+    
+    Arguments:
+        HRS: Real-space Hamiltonian array
+        nk1, nk2, nk3: Grid dimensions
+        nawf: Number of Wannier functions
+        ispin: Spin index
+        f: File handle to write to
+        header: Header string for the file
+    '''
+    nkpts = nk1*nk2*nk3
+    f.write(header + "\n")
+    f.write('%5d \n'%nawf)
+    
+    f.write('%5d \n'%(nk1*nk2*nk3))
+  
+    nl = 15 
+    
+    nlines = nkpts//nl # number of lines
+    nlast = nkpts%nl   # number of items of last line if needed
+    
+    for j in range(nlines):
+      f.write("1 "*nl)
+      f.write("\n")
+    f.write("1 "*nlast)
+    f.write("\n")
+
+    for i in range(nk1):
+      for j in range(nk2):
+        for k in range(nk3):
+          n = k + j*nk3 + i*nk2*nk3
+          Rx = float(i)/float(nk1)
+          Ry = float(j)/float(nk2)
+          Rz = float(k)/float(nk3)
+          if Rx >= 0.5: Rx=Rx-1.0
+          if Ry >= 0.5: Ry=Ry-1.0
+          if Rz >= 0.5: Rz=Rz-1.0
+          # the minus sign in Rx*nk1 is due to the Fourier transformation (Ri-Rj)
+          ix=-round(Rx*nk1,0)
+          iy=-round(Ry*nk2,0)
+          iz=-round(Rz*nk3,0)
+          for m in range(nawf):
+            for l in range(nawf):
+              # l+1,m+1 just to start from 1 not zero
+              f.write('%3d %3d %3d %5d %5d %28.14f %28.14f\n'%(ix,iy,iz,l+1,m+1,
+                                                       HRS[l,m,i,j,k,ispin].real,
+                                                       HRS[l,m,i,j,k,ispin].imag,))
+
+
   def write_HRs ( self, fname ):
     '''
     Write HRs in the Z2 Pack format
@@ -499,51 +550,6 @@ class DataController:
         import numpy as np
         from os.path import join
         from .defs.zero_pad import zero_pad
-
-        def HRs_write(nk1,nk2,nk3,nawf,ispin,f):
-
-            nkpts = nk1*nk2*nk3
-            f.write("PAOFLOW Generated \n")
-            f.write('%5d \n'%nawf)
-    
-            f.write('%5d \n'%(nk1*nk2*nk3))
-  
-            nl = 15 
-    
-            nlines = nkpts//nl # number of lines
-            nlast = nkpts%nl   # number of items of laste line if needed
-    
-            for j in range(nlines):
-              f.write("1 "*nl)
-              f.write("\n")
-            f.write("1 "*nlast)
-            f.write("\n")
-
-            for i in range(nk1):
-              for j in range(nk2):
-                for k in range(nk3):
-                  n = k + j*nk3 + i*nk2*nk3
-                  Rx = float(i)/float(nk1)
-                  Ry = float(j)/float(nk2)
-                  Rz = float(k)/float(nk3)
-                  if Rx >= 0.5: Rx=Rx-1.0
-                  if Ry >= 0.5: Ry=Ry-1.0
-                  if Rz >= 0.5: Rz=Rz-1.0
-                  Rx -= int(Rx)
-                  Ry -= int(Ry)
-                  Rz -= int(Rz)
-                  # the minus sign in Rx*nk1 is due to the Fourier transformation (Ri-Rj)
-                  ix=-round(Rx*nk1,0)
-                  iy=-round(Ry*nk2,0)
-                  iz=-round(Rz*nk3,0)
-                  for m in range(nawf):
-                    for l in range(nawf):
-                      # l+1,m+1 just to start from 1 not zero
-
-                      f.write('%3d %3d %3d %5d %5d %28.14f %28.14f\n'%(ix,iy,iz,l+1,m+1,
-                                                               HRS[l,m,i,j,k,ispin].real,
-                                                               HRS[l,m,i,j,k,ispin].imag,))
-
 
         arry,attr = self.data_dicts()
 
@@ -576,11 +582,11 @@ class DataController:
 
         if nspin==1:
           with open(join(attr['opath'],fname), 'w') as f:
-            HRs_write(nk1,nk2,nk3,nawf,0,f)
+            self._write_HRs_to_file(HRS, nk1, nk2, nk3, nawf, 0, f)
         else:
             for ispin in range(nspin):
               with open(join(attr['opath'],fname+'_'+str(ispin)), 'w') as f:
-                HRs_write(nk1,nk2,nk3,nawf,ispin,f)
+                self._write_HRs_to_file(HRS, nk1, nk2, nk3, nawf, ispin, f)
 
                                                                
     except Exception as e:
@@ -611,51 +617,6 @@ class DataController:
         import numpy as np
         from os.path import join
         from .defs.zero_pad import zero_pad
-
-        def HRs_write(nk1,nk2,nk3,nawf,ispin,f):
-
-            nkpts = nk1*nk2*nk3
-            f.write("PAOFLOW Generated for TB2J\n")
-            f.write('%5d \n'%nawf)
-    
-            f.write('%5d \n'%(nk1*nk2*nk3))
-  
-            nl = 15 
-    
-            nlines = nkpts//nl # number of lines
-            nlast = nkpts%nl   # number of items of last line if needed
-    
-            for j in range(nlines):
-              f.write("1 "*nl)
-              f.write("\n")
-            f.write("1 "*nlast)
-            f.write("\n")
-
-            for i in range(nk1):
-              for j in range(nk2):
-                for k in range(nk3):
-                  n = k + j*nk3 + i*nk2*nk3
-                  Rx = float(i)/float(nk1)
-                  Ry = float(j)/float(nk2)
-                  Rz = float(k)/float(nk3)
-                  if Rx >= 0.5: Rx=Rx-1.0
-                  if Ry >= 0.5: Ry=Ry-1.0
-                  if Rz >= 0.5: Rz=Rz-1.0
-                  Rx -= int(Rx)
-                  Ry -= int(Ry)
-                  Rz -= int(Rz)
-                  # the minus sign in Rx*nk1 is due to the Fourier transformation (Ri-Rj)
-                  ix=-round(Rx*nk1,0)
-                  iy=-round(Ry*nk2,0)
-                  iz=-round(Rz*nk3,0)
-                  for m in range(nawf):
-                    for l in range(nawf):
-                      # l+1,m+1 just to start from 1 not zero
-
-                      f.write('%3d %3d %3d %5d %5d %28.14f %28.14f\n'%(ix,iy,iz,l+1,m+1,
-                                                               HRS[l,m,i,j,k,ispin].real,
-                                                               HRS[l,m,i,j,k,ispin].imag,))
-
 
         arry,attr = self.data_dicts()
 
@@ -689,16 +650,16 @@ class DataController:
         if nspin==1:
           fname = f'{prefix}_hr.dat'
           with open(join(attr['opath'],fname), 'w') as f:
-            HRs_write(nk1,nk2,nk3,nawf,0,f)
+            self._write_HRs_to_file(HRS, nk1, nk2, nk3, nawf, 0, f, header="PAOFLOW Generated for TB2J")
           print(f'Hamiltonian written to {fname} for TB2J (non-spin-polarized)')
         else:
           # Write spin-up and spin-down with TB2J naming convention
           fname_up = f'{prefix}.up_hr.dat'
           fname_dn = f'{prefix}.dn_hr.dat'
           with open(join(attr['opath'],fname_up), 'w') as f:
-            HRs_write(nk1,nk2,nk3,nawf,0,f)
+            self._write_HRs_to_file(HRS, nk1, nk2, nk3, nawf, 0, f, header="PAOFLOW Generated for TB2J")
           with open(join(attr['opath'],fname_dn), 'w') as f:
-            HRs_write(nk1,nk2,nk3,nawf,1,f)
+            self._write_HRs_to_file(HRS, nk1, nk2, nk3, nawf, 1, f, header="PAOFLOW Generated for TB2J")
           print(f'Hamiltonians written to {fname_up} and {fname_dn} for TB2J (spin-polarized)')
 
                                                                
