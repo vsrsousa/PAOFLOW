@@ -591,6 +591,124 @@ class DataController:
     self.comm.Barrier()
 
 
+  def write_HRs_TB2J ( self, prefix='paoflow' ):
+    '''
+    Write HRs in Wannier90 format for TB2J with proper spin-specific naming.
+    For spin-polarized calculations (nspin=2), creates:
+      - {prefix}.up_hr.dat for spin-up
+      - {prefix}.dn_hr.dat for spin-down
+    For non-spin-polarized calculations (nspin=1), creates:
+      - {prefix}_hr.dat
+
+    Arguments:
+        prefix (str): Prefix for the output files (default: 'paoflow')
+
+    Returns:
+        None
+    '''
+    try:
+      if self.rank == 0:
+        import numpy as np
+        from os.path import join
+        from .defs.zero_pad import zero_pad
+
+        def HRs_write(nk1,nk2,nk3,nawf,ispin,f):
+
+            nkpts = nk1*nk2*nk3
+            f.write("PAOFLOW Generated for TB2J\n")
+            f.write('%5d \n'%nawf)
+    
+            f.write('%5d \n'%(nk1*nk2*nk3))
+  
+            nl = 15 
+    
+            nlines = nkpts//nl # number of lines
+            nlast = nkpts%nl   # number of items of last line if needed
+    
+            for j in range(nlines):
+              f.write("1 "*nl)
+              f.write("\n")
+            f.write("1 "*nlast)
+            f.write("\n")
+
+            for i in range(nk1):
+              for j in range(nk2):
+                for k in range(nk3):
+                  n = k + j*nk3 + i*nk2*nk3
+                  Rx = float(i)/float(nk1)
+                  Ry = float(j)/float(nk2)
+                  Rz = float(k)/float(nk3)
+                  if Rx >= 0.5: Rx=Rx-1.0
+                  if Ry >= 0.5: Ry=Ry-1.0
+                  if Rz >= 0.5: Rz=Rz-1.0
+                  Rx -= int(Rx)
+                  Ry -= int(Ry)
+                  Rz -= int(Rz)
+                  # the minus sign in Rx*nk1 is due to the Fourier transformation (Ri-Rj)
+                  ix=-round(Rx*nk1,0)
+                  iy=-round(Ry*nk2,0)
+                  iz=-round(Rz*nk3,0)
+                  for m in range(nawf):
+                    for l in range(nawf):
+                      # l+1,m+1 just to start from 1 not zero
+
+                      f.write('%3d %3d %3d %5d %5d %28.14f %28.14f\n'%(ix,iy,iz,l+1,m+1,
+                                                               HRS[l,m,i,j,k,ispin].real,
+                                                               HRS[l,m,i,j,k,ispin].imag,))
+
+
+        arry,attr = self.data_dicts()
+
+        HRS=np.fft.ifftn(arry["Hks"],axes=(2,3,4))
+
+        nawf,_,nk1,nk2,nk3,nspin=HRS.shape
+        # how to pad HR to make sure it's odd
+        if nk1%2:
+          pad1=0
+        else: pad1=1
+        if nk2%2:
+          pad2=0
+        else: pad2=1
+        if nk3%2:
+          pad3=0
+        else: pad3=1
+
+
+        HRS_interp=np.zeros((nawf,nawf,nk1+pad1,nk2+pad2,nk3+pad3,nspin),dtype=complex)
+        for n in range(nawf):
+          for m in range(nawf):
+            for ispin in range(nspin):
+              HRS_interp[n,m,:,:,:,ispin] = zero_pad(HRS[n,m,:,:,:,ispin],nk1,nk2,nk3,pad1,pad2,pad3)
+
+        nk1+=pad1
+        nk2+=pad2
+        nk3+=pad3
+        HRS=HRS_interp
+        HRS_interp=None
+
+        if nspin==1:
+          fname = f'{prefix}_hr.dat'
+          with open(join(attr['opath'],fname), 'w') as f:
+            HRs_write(nk1,nk2,nk3,nawf,0,f)
+          print(f'Hamiltonian written to {fname} for TB2J (non-spin-polarized)')
+        else:
+          # Write spin-up and spin-down with TB2J naming convention
+          fname_up = f'{prefix}.up_hr.dat'
+          fname_dn = f'{prefix}.dn_hr.dat'
+          with open(join(attr['opath'],fname_up), 'w') as f:
+            HRs_write(nk1,nk2,nk3,nawf,0,f)
+          with open(join(attr['opath'],fname_dn), 'w') as f:
+            HRs_write(nk1,nk2,nk3,nawf,1,f)
+          print(f'Hamiltonians written to {fname_up} and {fname_dn} for TB2J (spin-polarized)')
+
+                                                               
+    except Exception as e:
+      self.report_exception('Write Hamiltonian for TB2J')
+      if self.data_attributes['abort_on_exception']:
+        raise e
+
+    self.comm.Barrier()
+
 
   def broadcast_single_array ( self, key, dtype=complex, root=0 ):
     '''

@@ -518,6 +518,42 @@ class PAOFLOW:
     self.report_module_time('write_Hamiltonian')
 
 
+  def write_Hamiltonian_TB2J ( self, prefix='paoflow' ):
+    '''
+    Write 'HRs' to file in Wannier90 format for use with TB2J.
+    
+    For spin-polarized calculations (nspin=2), creates two files:
+      - {prefix}.up_hr.dat for spin-up channel
+      - {prefix}.dn_hr.dat for spin-down channel
+    
+    For non-spin-polarized calculations (nspin=1), creates:
+      - {prefix}_hr.dat
+    
+    These files can be used with TB2J's wann2J tool to calculate magnetic 
+    exchange interactions using the magnetic force theorem.
+
+    Arguments:
+        prefix (str): Prefix for output file names (default: 'paoflow')
+
+    Returns:
+        None
+
+    Example:
+        >>> paoflow = PAOFLOW(savedir='./nscf_nspin2/', outputdir='./output/', dft="VASP")
+        >>> paoflow.projectability()
+        >>> paoflow.pao_hamiltonian()
+        >>> paoflow.write_Hamiltonian_TB2J(prefix='MyMaterial')
+        # Creates MyMaterial.up_hr.dat and MyMaterial.dn_hr.dat for TB2J
+
+    '''
+    try:
+      self.data_controller.write_HRs_TB2J(prefix)
+    except Exception as e:
+      self.report_exception('write_Hamiltonian_TB2J')
+      if self.data_controller.data_attributes['abort_on_exception']:
+        raise e
+    self.report_module_time('write_Hamiltonian_TB2J')
+
 
   def bands ( self, ibrav=None, band_path=None, high_sym_points=None, spin_orbit=False, fname='bands', nk=500 ):
     '''
