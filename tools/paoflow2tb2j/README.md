@@ -4,7 +4,17 @@ A standalone tool to convert PAOFLOW Hamiltonian output to TB2J Wannier90 format
 
 ## Why This Tool?
 
-PAOFLOW already writes Hamiltonians in various formats. This standalone converter reads existing PAOFLOW output and converts it to the specific format and naming convention expected by TB2J, avoiding the need to modify PAOFLOW itself.
+PAOFLOW already writes Hamiltonians in Wannier90 format. However, TB2J has a specific quirk in its parser: it divides all Hamiltonian matrix elements by 2.0 when reading. This converter:
+
+1. Reads existing PAOFLOW output (already in Wannier90 format)
+2. **Multiplies all matrix elements by 2.0** to compensate for TB2J's division
+3. Renames files to TB2J's expected naming convention
+
+This ensures correct Hamiltonian values in TB2J without modifying PAOFLOW.
+
+## Important Note on TB2J Compatibility
+
+**TB2J divides all Hamiltonian values by 2.0 when reading** (see `parse_ham()` in TB2J's `w90_parser.py`). To get correct results, this converter multiplies all matrix elements by 2.0 before writing. Simply renaming PAOFLOW files would give incorrect exchange parameters.
 
 ## Installation
 
@@ -154,23 +164,42 @@ python paoflow2tb2j.py --input output/ \
 
 ## Output Format
 
-The converter creates files in Wannier90 `_hr.dat` format:
+The converter creates files in Wannier90 `_hr.dat` format with a critical adjustment for TB2J:
 
 ```
 PAOFLOW to TB2J Converter
 <number of Wannier functions>
 <number of R vectors>
 <degeneracy weights>
-<Rx> <Ry> <Rz> <i> <j> <Re[H(R)_ij]> <Im[H(R)_ij]>
+<Rx> <Ry> <Rz> <i> <j> <Re[H(R)_ij] * 2.0> <Im[H(R)_ij] * 2.0>
 ...
 ```
 
+**Note:** All Hamiltonian matrix elements are multiplied by 2.0 to compensate for TB2J's division by 2.0 during parsing.
+
 For spin-polarized calculations:
-- `{prefix}.up_hr.dat` - Spin-up channel
-- `{prefix}.dn_hr.dat` - Spin-down channel
+- `{prefix}.up_hr.dat` - Spin-up channel (with factor of 2)
+- `{prefix}.dn_hr.dat` - Spin-down channel (with factor of 2)
 
 For non-spin-polarized:
-- `{prefix}_hr.dat` - Single Hamiltonian
+- `{prefix}_hr.dat` - Single Hamiltonian (with factor of 2)
+
+## TB2J Parser Behavior
+
+TB2J's `parse_ham()` function in `w90_parser.py` divides all matrix elements by 2.0:
+
+```python
+# From TB2J source code:
+if m == n and np.linalg.norm(R) < 0.001:
+    H_mnR[R][m, n] = val / 2.0  # Diagonal at R=0
+elif cutoff is not None:
+    if abs(val) > cutoff:
+        H_mnR[R][m, n] = val / 2.0  # All other elements
+else:
+    H_mnR[R][m, n] = val / 2.0  # All other elements
+```
+
+This converter multiplies by 2.0 before writing to ensure correct values after TB2J reads them.
 
 ## Advantages of Standalone Approach
 

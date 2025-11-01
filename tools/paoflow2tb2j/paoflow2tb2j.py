@@ -45,7 +45,7 @@ def zero_pad(HR, nk1, nk2, nk3, pad1, pad2, pad3):
 
 def write_wannier90_hr(HRS, nk1, nk2, nk3, nawf, ispin, f, header="PAOFLOW to TB2J Converter"):
     """
-    Write Hamiltonian in Wannier90 _hr.dat format.
+    Write Hamiltonian in Wannier90 _hr.dat format compatible with TB2J.
     
     Args:
         HRS: Real-space Hamiltonian array
@@ -54,6 +54,9 @@ def write_wannier90_hr(HRS, nk1, nk2, nk3, nawf, ispin, f, header="PAOFLOW to TB
         ispin: Spin index
         f: File handle to write to
         header: Header string for the file
+        
+    Note:
+        TB2J divides all matrix elements by 2.0 when reading, so we multiply by 2.0 when writing.
     """
     nkpts = nk1 * nk2 * nk3
     f.write(header + "\n")
@@ -72,6 +75,7 @@ def write_wannier90_hr(HRS, nk1, nk2, nk3, nawf, ispin, f, header="PAOFLOW to TB
     f.write("\n")
     
     # Write Hamiltonian matrix elements
+    # Multiply by 2.0 to compensate for TB2J's division by 2.0 when reading
     for i in range(nk1):
         for j in range(nk2):
             for k in range(nk3):
@@ -91,17 +95,93 @@ def write_wannier90_hr(HRS, nk1, nk2, nk3, nawf, ispin, f, header="PAOFLOW to TB
                 
                 for m in range(nawf):
                     for l in range(nawf):
+                        # Multiply by 2.0 for TB2J compatibility
                         f.write('%3d %3d %3d %5d %5d %28.14f %28.14f\n' % (
                             ix, iy, iz, l+1, m+1,
-                            HRS[l, m, i, j, k, ispin].real,
-                            HRS[l, m, i, j, k, ispin].imag))
+                            2.0 * HRS[l, m, i, j, k, ispin].real,
+                            2.0 * HRS[l, m, i, j, k, ispin].imag))
+
+
+def parse_paoflow_hr(fname):
+    """
+    Parse PAOFLOW Hamiltonian file (Wannier90 format).
+    
+    Returns:
+        n_wann: Number of Wannier functions
+        n_R: Number of R points
+        R_degens: Degeneracy weights
+        H_data: List of (Rx, Ry, Rz, m, n, H_real, H_imag) tuples
+    """
+    with open(fname, 'r') as f:
+        lines = f.readlines()
+    
+    # Line 0: Header
+    # Line 1: n_wann
+    # Line 2: n_R
+    n_wann = int(lines[1].strip())
+    n_R = int(lines[2].strip())
+    
+    # Read degeneracy weights (15 per line)
+    nline = int(np.ceil(n_R / 15.0))
+    R_degens = []
+    for i in range(3, 3 + nline):
+        R_degens.extend(map(int, lines[i].strip().split()))
+    R_degens = np.array(R_degens, dtype=int)
+    
+    # Read Hamiltonian matrix elements
+    H_data = []
+    for i in range(3 + nline, len(lines)):
+        parts = lines[i].strip().split()
+        if len(parts) >= 7:
+            Rx, Ry, Rz = map(int, parts[0:3])
+            m, n = map(int, parts[3:5])
+            H_real, H_imag = map(float, parts[5:7])
+            H_data.append((Rx, Ry, Rz, m, n, H_real, H_imag))
+    
+    return n_wann, n_R, R_degens, H_data
+
+
+def write_tb2j_hr(fname, n_wann, n_R, R_degens, H_data, header="PAOFLOW to TB2J Converter"):
+    """
+    Write Hamiltonian in TB2J-compatible Wannier90 format.
+    
+    TB2J divides all matrix elements by 2.0 when reading, so we multiply by 2.0 when writing.
+    """
+    with open(fname, 'w') as f:
+        # Write header
+        f.write(header + "\n")
+        f.write(f'{n_wann:5d} \n')
+        f.write(f'{n_R:5d} \n')
+        
+        # Write degeneracy weights (15 per line)
+        nl = 15
+        nlines = n_R // nl
+        nlast = n_R % nl
+        
+        idx = 0
+        for j in range(nlines):
+            for k in range(nl):
+                f.write(f'{R_degens[idx]} ')
+                idx += 1
+            f.write("\n")
+        for k in range(nlast):
+            f.write(f'{R_degens[idx]} ')
+            idx += 1
+        if nlast > 0:
+            f.write("\n")
+        
+        # Write Hamiltonian matrix elements
+        # Multiply by 2.0 to compensate for TB2J's division by 2.0 when reading
+        for Rx, Ry, Rz, m, n, H_real, H_imag in H_data:
+            f.write(f'{Rx:3d} {Ry:3d} {Rz:3d} {m:5d} {n:5d} {2.0*H_real:28.14f} {2.0*H_imag:28.14f}\n')
 
 
 def convert_from_write_HRs(input_dir, prefix, output_prefix='tb2j'):
     """
     Convert PAOFLOW write_HRs output to TB2J format.
     
-    This reads the files created by PAOFLOW.write_Hamiltonian() method.
+    This reads the files created by PAOFLOW.write_Hamiltonian() method and
+    adjusts the Hamiltonian values to account for TB2J's factor of 2 division.
     
     Args:
         input_dir: Directory containing PAOFLOW output
@@ -116,36 +196,45 @@ def convert_from_write_HRs(input_dir, prefix, output_prefix='tb2j'):
     if os.path.exists(fname_0) and os.path.exists(fname_1):
         # Spin-polarized case
         print(f"Found spin-polarized PAOFLOW output: {fname_0}, {fname_1}")
+        print("Parsing and converting to TB2J format...")
+        print("Note: Multiplying matrix elements by 2.0 to compensate for TB2J's division")
         
-        # For now, just copy and rename with TB2J convention
-        # The format is already Wannier90-compatible
-        import shutil
+        # Parse spin-up
+        n_wann_up, n_R_up, R_degens_up, H_data_up = parse_paoflow_hr(fname_0)
         
+        # Parse spin-down
+        n_wann_dn, n_R_dn, R_degens_dn, H_data_dn = parse_paoflow_hr(fname_1)
+        
+        # Write TB2J files with factor of 2
         output_up = os.path.join(input_dir, f'{output_prefix}.up_hr.dat')
         output_dn = os.path.join(input_dir, f'{output_prefix}.dn_hr.dat')
         
-        shutil.copy2(fname_0, output_up)
-        shutil.copy2(fname_1, output_dn)
+        write_tb2j_hr(output_up, n_wann_up, n_R_up, R_degens_up, H_data_up)
+        write_tb2j_hr(output_dn, n_wann_dn, n_R_dn, R_degens_dn, H_data_dn)
         
         print(f"Created TB2J files:")
-        print(f"  - {output_up}")
-        print(f"  - {output_dn}")
+        print(f"  - {output_up} ({len(H_data_up)} matrix elements)")
+        print(f"  - {output_dn} ({len(H_data_dn)} matrix elements)")
         
     elif os.path.exists(fname_single):
         # Non-spin-polarized case
         print(f"Found non-spin-polarized PAOFLOW output: {fname_single}")
+        print("Parsing and converting to TB2J format...")
+        print("Note: Multiplying matrix elements by 2.0 to compensate for TB2J's division")
         
-        import shutil
+        n_wann, n_R, R_degens, H_data = parse_paoflow_hr(fname_single)
+        
         output_file = os.path.join(input_dir, f'{output_prefix}_hr.dat')
-        shutil.copy2(fname_single, output_file)
+        write_tb2j_hr(output_file, n_wann, n_R, R_degens, H_data)
         
-        print(f"Created TB2J file: {output_file}")
+        print(f"Created TB2J file: {output_file} ({len(H_data)} matrix elements)")
         
     else:
         raise FileNotFoundError(
             f"Could not find PAOFLOW Hamiltonian files with prefix '{prefix}' in {input_dir}\n"
             f"Expected files: {fname_0} and {fname_1} (spin-polarized) or {fname_single} (non-spin-polarized)"
         )
+
 
 
 def convert_from_Hks_npy(input_dir, output_prefix='tb2j', nk1=None, nk2=None, nk3=None):
