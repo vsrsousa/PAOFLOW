@@ -624,10 +624,10 @@ class PAOFLOW:
 
         attr = self.data_controller.data_attributes
 
-        if 'pthr' not in attr:
-            attr['pthr'] = pthr
-        if 'shift' not in attr:
-            attr['shift'] = shift
+        # Always update projectability parameters from the call so that
+        # subsequent invocations with different pthr/shift actually take effect.
+        attr['pthr'] = pthr
+        attr['shift'] = shift
 
         try:
             do_projectability(self.data_controller)
