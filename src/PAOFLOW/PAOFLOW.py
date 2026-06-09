@@ -570,14 +570,41 @@ class PAOFLOW:
         fpath = attr['fpath']
         if exists(join(fpath, 'atomic_proj.xml')):
             from .inputs.read_QE_xml import parse_qe_atomic_proj
-
             if attr['acbn0'] and not attr['save_overlaps']:
                 if self.rank == 0:
                     print(
                         'WARNING: ACBN0 requires wavefunction overlaps. Setting save_overlaps to True.'
                     )
                 attr['save_overlaps'] = True
+            # Parse the atomic_proj.xml on rank 0 (inside parse_qe_atomic_proj)
             parse_qe_atomic_proj(self.data_controller, join(fpath, 'atomic_proj.xml'))
+            # Ensure the projections and overlaps are available on all ranks
+            # by broadcasting the arrays from root=0. Also set nawf attribute
+            # so downstream code relying on it works uniformly.
+            arry, attr = self.data_controller.data_dicts()
+            if 'U' in arry:
+                try:
+                    self.data_controller.broadcast_single_array('U', dtype=complex, root=0)
+                except Exception:
+                    # best-effort: if broadcast fails, continue and let later checks raise
+                    pass
+                # attempt to determine nawf (support both axis orders)
+                try:
+                    shape = arry['U'].shape
+                    if len(shape) >= 4:
+                        # common layouts: (nawf, nbnds, nkpnts, nspin) or (nbnds, nawf, nkpnts, nspin)
+                        if shape[0] == attr.get('nawf', 0) or shape[0] == attr.get('natwfc', 0):
+                            nawf = shape[0]
+                        else:
+                            nawf = shape[1]
+                        attr['nawf'] = nawf
+                except Exception:
+                    pass
+            if 'Sks' in arry and arry['Sks'] is not None:
+                try:
+                    self.data_controller.broadcast_single_array('Sks', dtype=complex, root=0)
+                except Exception:
+                    pass
         else:
             raise Exception('atomic_proj.xml was not found.\n')
 
