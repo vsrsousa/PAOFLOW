@@ -210,6 +210,151 @@ class PAOFLOW:
             self.data_controller.print_data()
         self.comm.Barrier()
 
+    def print_orbital_locations(self, show_cartesian=True, use_original=False, return_list=False):
+        """Print or return projected-orbital locations and mapping to `U`.
+
+        Parameters
+        ----------
+        show_cartesian : bool
+            If True, compute and display Cartesian coordinates using
+            `arrays['a_vectors']` and `attr['alat']` when available.
+        use_original : bool
+            If True, prefer `arrays['basis_orig']` when present (preserved
+            copy); otherwise uses current `arrays['basis']`.
+        return_list : bool
+            If True, return a list of dicts instead of printing.
+
+        Returns
+        -------
+        list[dict] or None
+            If `return_list` is True, returns a list with entries:
+            {'index','atom','label','tau_frac','tau_cart'}.
+        """
+        import numpy as _np
+
+        arry, attr = self.data_controller.data_dicts()
+
+        if use_original and 'basis_orig' in arry:
+            basis = arry['basis_orig']
+        else:
+            basis = arry.get('basis')
+
+        if basis is None:
+            if self.rank == 0:
+                print('print_orbital_locations: `basis` not available.')
+            return None
+
+        a_vectors = arry.get('a_vectors')
+        alat = attr.get('alat', 1.0)
+
+        # Identify likely nawf axis in U for mapping clarity
+        U = arry.get('U')
+        if self.rank == 0 and U is not None:
+            try:
+                axes = {i: U.shape[i] for i in range(U.ndim)}
+                probable = [ax for ax, s in axes.items() if s == len(basis)]
+                if probable:
+                    print(f'print_orbital_locations: U.shape={U.shape}, likely nawf axis={probable[0]}')
+                else:
+                    print(f'print_orbital_locations: U.shape={U.shape}, nawf not found in U shape')
+            except Exception:
+                print(f'print_orbital_locations: U present with shape {getattr(U, "shape", None)}')
+
+        locs = []
+        a_mat = _np.array(a_vectors) if (a_vectors is not None and show_cartesian) else None
+        for i, b in enumerate(basis):
+            atom = b.get('atom', '')
+            label = b.get('label', '')
+            tau_frac = _np.array(b.get('tau', [0.0, 0.0, 0.0]), dtype=float)
+            tau_cart = None
+            if show_cartesian and a_mat is not None:
+                try:
+                    tau_cart = tau_frac @ a_mat * float(alat)
+                except Exception:
+                    tau_cart = None
+
+            entry = {
+                'index': i,
+                'atom': atom,
+                'label': label,
+                'tau_frac': tau_frac,
+                'tau_cart': tau_cart,
+            }
+            locs.append(entry)
+
+            if self.rank == 0 and not return_list:
+                if tau_cart is None:
+                    print(f"{i:3d}: {atom:6s} {label:6s} frac={tau_frac}")
+                else:
+                    print(f"{i:3d}: {atom:6s} {label:6s} frac={tau_frac} cart={tau_cart}")
+
+        if return_list:
+            return locs
+
+        return None
+
+    def generate_HRs_from_Hksp(self, write=False, hr_fname='HRs.dat'):
+        """Convert interpolated `Hksp` -> `Hks`, perform iFFT to obtain `HRs`.
+
+        Parameters
+        ----------
+        write : bool
+            If True, call `DataController.write_HRs(hr_fname)` after building `HRs`.
+        hr_fname : str
+            Filename passed to `write_HRs` when `write=True`.
+        """
+        from .hamiltonian.do_build_pao_hamiltonian import do_Hks_to_HRs
+
+        arry, attr = self.data_controller.data_dicts()
+
+        if 'Hksp' not in arry:
+            if self.rank == 0:
+                print('generate_HRs_from_Hksp: arrays["Hksp"] not found; run interpolated_hamiltonian() first')
+            return
+
+        Hksp = arry['Hksp']
+        # Expected shape: (nktot, nawf, nawf, nspin)
+        if Hksp.ndim != 4:
+            if self.rank == 0:
+                print('generate_HRs_from_Hksp: unexpected Hksp shape:', getattr(Hksp, 'shape', None))
+            return
+
+        nktot = Hksp.shape[0]
+        nawf = attr['nawf']
+        nspin = attr['nspin']
+        nk1, nk2, nk3 = attr.get('nk1'), attr.get('nk2'), attr.get('nk3')
+
+        if nk1 * nk2 * nk3 != nktot:
+            if self.rank == 0:
+                print('generate_HRs_from_Hksp: mismatch between nktot and (nk1,nk2,nk3). Trying to proceed anyway.')
+
+        # reshape: (nktot, nawf, nawf, nspin) -> (nk1,nk2,nk3,nawf,nawf,nspin)
+        try:
+            Htmp = Hksp.reshape((nk1, nk2, nk3, nawf, nawf, nspin))
+        except Exception:
+            # fallback: try (nawf,nawf,nktot,nspin) ordering
+            try:
+                Htmp = Hksp.transpose((1, 2, 0, 3)).reshape((nawf, nawf, nk1, nk2, nk3, nspin))
+                arry['Hks'] = Htmp
+                do_Hks_to_HRs(self.data_controller)
+                if write and self.rank == 0:
+                    self.data_controller.write_HRs(hr_fname)
+                return
+            except Exception:
+                if self.rank == 0:
+                    print('generate_HRs_from_Hksp: failed to reshape Hksp to Hks')
+                return
+
+        # transpose to (nawf,nawf,nk1,nk2,nk3,nspin)
+        Hks = np.transpose(Htmp, (3, 4, 0, 1, 2, 5))
+        arry['Hks'] = Hks
+
+        # Build HRs via inverse FFT (do_Hks_to_HRs handles broadcasting)
+        do_Hks_to_HRs(self.data_controller)
+
+        if write and self.rank == 0:
+            self.data_controller.write_HRs(hr_fname)
+
     def __init__(
         self,
         workpath='./',
@@ -224,7 +369,9 @@ class PAOFLOW:
         verbose=False,
         restart=False,
         dft='QE',
-    ):
+        expand_wedge=None,
+        symmetrize=None,
+    ): 
         """
         Initialize the PAOFLOW class, either with a save directory with required QE output or with an xml inputfile
         Arguments:
@@ -288,6 +435,11 @@ class PAOFLOW:
             attr = self.data_controller.data_attributes
 
             attr['scipyfft'] = True
+            # Allow caller to override symmetry/expand flags at construction
+            if expand_wedge is not None:
+                attr['expand_wedge'] = bool(expand_wedge)
+            if symmetrize is not None:
+                attr['symmetrize'] = bool(symmetrize)
 
         # Report execution information
         if self.rank == 0:
@@ -552,6 +704,61 @@ class PAOFLOW:
 
         arry['U'] = Unew
         arry['basis'] = basis
+
+        # Optionally remove semicore bands from the projection space.
+        # User can enable via attribute `nosemicore` (bool) and provide
+        # `semicore_orbitals` as a dict: { 'Fe': ['3D','3P'], ... }
+        try:
+            if attr.get('nosemicore', False) or attr.get('remove_semicore', False):
+                semicfg = attr.get('semicore_orbitals') or attr.get('nosemicore_orbitals')
+                if semicfg is None:
+                    if attr.get('verbose') and self.rank == 0:
+                        print('nosemicore requested but `semicore_orbitals` not provided; skipping')
+                else:
+                    # Count number of orbitals requested to remove based on `arry['basis']` labels
+                    import re
+                    from .projection.remove_semicore import remove_semicore_states
+
+                    total_remove = 0
+                    per_elem_remove = {}
+                    for elem, labs in semicfg.items():
+                        cnt = 0
+                        for b in arry['basis']:
+                            atom = re.split(r'\d+', b['atom'])[0]
+                            if atom != elem:
+                                continue
+                            lab = b.get('label', '').strip()
+                            if len(lab) == 2:
+                                lab = lab[0] + lab[1].upper()
+                            if lab in labs:
+                                cnt += 1
+                        per_elem_remove[elem] = cnt
+                        total_remove += cnt
+
+                    if total_remove <= 0:
+                        if attr.get('verbose') and self.rank == 0:
+                            print('nosemicore: no matching orbitals found in basis; skipping')
+                    else:
+                        # Decide which DFT bands to remove: pick lowest `total_remove` by
+                        # representative energy (mean over k and spin).
+                        if 'my_eigsmat' not in arry:
+                            if attr.get('verbose') and self.rank == 0:
+                                print('nosemicore: my_eigsmat not available; cannot identify semicore bands')
+                        else:
+                            eigs = arry['my_eigsmat']  # shape (nbnds, nkpnts, nspin)
+                            # representative energy per band: mean over k and spin
+                            e_rep = eigs.mean(axis=(1, 2))
+                            idx_sorted = list(e_rep.argsort())
+                            remove_idx = idx_sorted[:total_remove]
+                            # Warn if some selected bands are above Fermi-ish
+                            if (e_rep[remove_idx] > 0).any() and attr.get('verbose') and self.rank == 0:
+                                print('nosemicore: some selected bands have non-negative mean energy; removing lowest bands anyway')
+
+                            # Call helper to remove these bands
+                            remove_semicore_states(self.data_controller, band_indices=remove_idx, verbose=attr.get('verbose', True))
+        except Exception as e:
+            if attr.get('verbose') and self.rank == 0:
+                print('nosemicore: failed during automatic removal:', e)
 
         self.report_module_time('Projections')
 

@@ -56,9 +56,20 @@ def E_Fermi(Hksp, data_controller, parallel=False):
     insulator = attr['insulator']
     nktot, nbnd = attr['nkpnts'], attr['bnd']
     nelec, dftSO = attr['nelec'], attr['dftSO']
-    nawf, _, snktot, nspin = Hksp.shape
+    verbose = attr.get('verbose_efcalc', False)
+    # Accept either k-space compressed shape (nawf, nawf, snktot, nspin)
+    # or grid shape (nawf, nawf, nk1, nk2, nk3, nspin).
+    if Hksp.ndim == 4:
+        nawf, _, snktot, nspin = Hksp.shape
+        Hksp = Hksp.reshape((nawf, nawf, snktot, nspin), order='C')
+    elif Hksp.ndim == 6:
+        nawf, _, nk1, nk2, nk3, nspin = Hksp.shape
+        snktot = nk1 * nk2 * nk3
+        Hksp = Hksp.reshape((nawf, nawf, snktot, nspin), order='C')
+    else:
+        raise ValueError('Hksp must have 4 or 6 dimensions; got %s' % (Hksp.shape,))
+
     eig = np.zeros((nawf, snktot, nspin))
-    Hksp = Hksp.reshape((nawf, nawf, snktot, nspin), order='C')
 
     for ispin in range(nspin):
         for ik in range(snktot):
@@ -104,6 +115,10 @@ def E_Fermi(Hksp, data_controller, parallel=False):
             sumkup = sumkup_aux / nktot
             sumklw = sumklw_aux / nktot
 
+        if verbose and rank == 0:
+            print('E_Fermi: initial bracket Elw, Eup =', Elw, Eup)
+            print('E_Fermi: sumklw, sumkup =', sumklw, sumkup)
+
         if (sumkup - nelec) < -eps or (sumklw - nelec) > eps:
             if rank == 0:
                 print('Error: cannot bracket Ef')
@@ -118,6 +133,9 @@ def E_Fermi(Hksp, data_controller, parallel=False):
                 sumkmid = comm.bcast(sumkmid[0] / nktot if rank == 0 else None)
             else:
                 sumkmid = sumkmid_aux / nktot
+
+            if verbose and rank == 0:
+                print(f'E_Fermi iter {i}: Ef={Ef:.12f}, sumkmid={sumkmid:.12f}, diff={sumkmid-nelec:.3e}')
 
             if np.abs(sumkmid - nelec) < eps:
                 break
